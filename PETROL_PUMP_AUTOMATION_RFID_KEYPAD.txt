@@ -1,0 +1,189 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Keypad.h>
+#include <SoftwareSerial.h>
+
+// === Pin Definitions ===
+#define BUZZER_PIN  12
+#define RELAY_PIN   13
+
+// === I2C LCD ===
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// === RFID (EM-18) ===
+SoftwareSerial rfidSerial(2, 3); // RX, TX
+String masterTag = " 52003E9E6A98 "; // Change this to your RFID Tag
+String readTag = "";
+
+// === Keypad Setup ===
+const byte ROWS = 4; 
+const byte COLS = 4;
+char keys[ROWS][COLS] = {
+  {'1','2','3','A'},
+  {'4','5','6','B'},
+  {'7','8','9','C'},
+  {'*','0','#','D'}
+};
+byte rowPins[ROWS] = {11, 10, 9, 8};
+byte colPins[COLS] = {7, 6, 5, 4};
+
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+// === Password ===
+String correctPassword = "5555";
+
+// === Variables ===
+bool isAuthenticated = false;
+bool isPasswordCorrect = false;
+int fuelAmount = 10;
+int walletBalance = 1000;
+
+void setup() {
+  Serial.begin(9600);
+  rfidSerial.begin(9600);
+
+  lcd.init();
+  lcd.backlight();
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  lcd.setCursor(0, 0);
+  lcd.print("Petrol Pump");
+  lcd.setCursor(0, 1);
+  lcd.print("Scan RFID...");
+}
+
+void loop() {
+  if (!isAuthenticated) {
+    readRFID();
+  } else if (!isPasswordCorrect) {
+    lcd.clear();
+    lcd.print("Enter Password:");
+    String enteredPassword = getKeypadInput(4, true);
+    if (enteredPassword == correctPassword) {
+      isPasswordCorrect = true;
+      lcd.clear();
+      lcd.print("Access Granted");
+      buzz(1);
+      delay(1000);
+    } else {
+      lcd.clear();
+      lcd.print("Wrong Password");
+      buzz(3);
+      delay(2000);
+      resetSystem();
+    }
+  } else {
+    lcd.clear();
+    lcd.print("Enter Amount:");
+    String amountStr = getKeypadInput(3, false); // up to 999
+    long fuelAmount = amountStr.toInt();
+
+    if (fuelAmount < walletBalance) {
+      walletBalance = walletBalance-fuelAmount;
+      lcd.clear();
+      lcd.print("Filling: ");
+      lcd.print(fuelAmount);
+      lcd.print(" Rs");
+      buzz(1);
+      digitalWrite(RELAY_PIN, HIGH); // Turn ON pump
+
+      delay(fuelAmount * 100); // Simulate time = amount seconds
+
+      digitalWrite(RELAY_PIN, LOW); // Turn OFF pump
+      lcd.clear();
+      lcd.print("Fill Complete");
+      
+      buzz(2);
+      delay(2000);
+      lcd.clear();
+      lcd.print("walletbalance");
+      lcd.setCursor(0, 1);
+      lcd.print(walletBalance);
+      delay(2000);
+      resetSystem();
+    } else {
+      lcd.clear();
+      lcd.print("Invalid Amount");
+      buzz(3);
+      delay(2000);
+      resetSystem();
+    }
+  }
+}
+
+void readRFID() {
+  if (rfidSerial.available()) {
+    delay(100);
+    readTag = "";
+    while (rfidSerial.available()) {
+      char c = rfidSerial.read();
+      if (c != '\n' && c != '\r') {
+        readTag += String(c, HEX);
+       
+      }
+    }
+
+    readTag.toUpperCase();
+    readTag.trim();
+
+    if (!readTag.equals(masterTag)) {
+      lcd.clear();
+      lcd.print("RFID Accepted");
+      buzz(1);
+      isAuthenticated = true;
+      delay(1000);
+    } else {
+      lcd.clear();
+      lcd.print("Invalid RFID");
+      buzz(3);
+      delay(2000);
+      lcd.clear();
+      lcd.print("Scan RFID...");
+    }
+  }
+}
+
+String getKeypadInput(int length, bool isPassword) {
+  String input = "";
+  char key;
+  while (input.length() < length) {
+    key = keypad.getKey();
+    if (key) {
+      if (key == '#') break; // confirm
+      if (key == '*') {
+        input = "";
+        lcd.setCursor(0, 1);
+        lcd.print("                ");
+        continue;
+      }
+      input += key;
+      lcd.setCursor(input.length() - 1, 1);
+      if (isPassword)
+        lcd.print("*");
+      else
+        lcd.print(key);
+    }
+  }
+  return input;
+}
+
+void buzz(int times) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(150);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(150);
+  }
+}
+
+void resetSystem() {
+  isAuthenticated = false;
+  isPasswordCorrect = false;
+  fuelAmount = 0;
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Scan RFID...");
+}
